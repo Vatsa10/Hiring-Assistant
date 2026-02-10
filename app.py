@@ -42,6 +42,8 @@ with st.sidebar.expander("Existing Candidate?"):
                 "desired_positions": data.get("desired_positions"),
                 "current_location": data.get("current_location"),
                 "tech_stack": data.get("tech_stack"),
+                "strongest_areas": data.get("strongest_areas"),
+                "preferences": data.get("preferences"),
                 "technical_questions": data.get("technical_questions"),
                 "current_question_index": data.get("current_question_index", 0)
             }
@@ -52,13 +54,12 @@ with st.sidebar.expander("Existing Candidate?"):
         else:
             st.error("No profile found for this email.")
 
-# Form-like inputs in sidebar (Tech Stack removed)
+# Form-like inputs in sidebar
 with st.sidebar.form("candidate_form"):
     full_name = st.text_input("Full Name", value=st.session_state.candidate_info.get("full_name") or "")
     email = st.text_input("Email Address", value=st.session_state.candidate_info.get("email") or "")
     phone = st.text_input("Phone Number", value=st.session_state.candidate_info.get("phone") or "")
     
-    # Handle numbers carefully
     exp_val = st.session_state.candidate_info.get("years_of_experience")
     years_of_experience = st.number_input("Years of Experience", min_value=0.0, max_value=50.0, value=float(exp_val) if exp_val else 0.0, step=0.5)
     
@@ -68,7 +69,6 @@ with st.sidebar.form("candidate_form"):
     submit_button = st.form_submit_button("Update Profile")
     
     if submit_button:
-        # Update session state with sidebar info
         st.session_state.candidate_info.update({
             "full_name": full_name if full_name else None,
             "email": email if email else None,
@@ -77,21 +77,17 @@ with st.sidebar.form("candidate_form"):
             "desired_positions": [p.strip() for p in desired_positions.split(",")] if desired_positions else [],
             "current_location": current_location if current_location else None,
         })
-        # Persist immediately to DB
         db.save_candidate(st.session_state.candidate_info, st.session_state.messages, st.session_state.is_complete)
-        
-        # Terminal notification
-        print(f"\n[INFO] Profile Updated for: {st.session_state.candidate_info.get('full_name')} ({st.session_state.candidate_info.get('email')})")
-        
-        # Frontend notification
         st.toast("✅ Profile Updated Successfully!")
-        st.success("Profile updated and saved!")
         st.rerun()
 
 # Display current progress in sidebar
 if st.session_state.candidate_info.get("tech_stack"):
     st.sidebar.markdown("---")
     st.sidebar.markdown(f"**Tech Stack:** {', '.join(st.session_state.candidate_info['tech_stack'])}")
+    if st.session_state.candidate_info.get("strongest_areas"):
+        st.sidebar.markdown(f"**Top Skills:** {', '.join(st.session_state.candidate_info['strongest_areas'])}")
+    
     if st.session_state.candidate_info.get("technical_questions"):
         total_q = len(st.session_state.candidate_info["technical_questions"])
         curr_q = st.session_state.candidate_info.get("current_question_index", 0)
@@ -100,7 +96,6 @@ if st.session_state.candidate_info.get("tech_stack"):
 
 st.sidebar.markdown("---")
 st.sidebar.caption("🔒 **Data Privacy Notice**")
-st.sidebar.caption("Your information is processed for recruitment purposes only and is stored securely in our local database.")
 
 st.title("💼 TalentScout Hiring Assistant")
 st.markdown("---")
@@ -112,65 +107,48 @@ for message in st.session_state.messages:
 
 # Chat input
 if user_input := st.chat_input("Type your message here...", disabled=st.session_state.is_complete):
-    # Add user message to history
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
         st.markdown(user_input)
 
-    # Process with CrewAI
     with st.spinner("Analyzing response..."):
         agent = create_recruiter_agent()
         task = create_screening_task(
             agent, 
             user_input, 
             st.session_state.candidate_info, 
-            st.session_state.messages[-15:] # last 15 messages for better context
+            st.session_state.messages[-15:]
         )
         
-        crew = Crew(
-            agents=[agent],
-            tasks=[task],
-            verbose=True
-        )
-        
+        crew = Crew(agents=[agent], tasks=[task], verbose=True)
         result = crew.kickoff()
         
-        # Debugging LLM output
         print(f"\n[DEBUG] LLM Raw Result: {result}")
         
         if hasattr(result, 'pydantic') and result.pydantic:
             response_obj = result.pydantic
-            print(f"[DEBUG] Pydantic Response Info: {response_obj.updated_info}")
         else:
             response_obj = ScreeningResponse(
                 updated_info=CandidateInfo(**st.session_state.candidate_info),
-                response_message=str(result) if str(result).strip() else "I'm sorry, I encountered a slight issue processing that. Could you please repeat or elaborate?",
+                response_message=str(result) if str(result).strip() else "I'm sorry, I'm having trouble phrasing my response. Let's continue.",
                 is_complete=False
             )
-            print(f"[DEBUG] Fallback Response used.")
 
-        # Ensure we don't show a blank message
         if not response_obj.response_message or not response_obj.response_message.strip():
             response_obj.response_message = "That's very interesting! Let's continue with our screening."
 
-        # Update state from LLM extraction (sync with sidebar)
+        # Update state
         new_info = response_obj.updated_info.model_dump()
         
-        # Persistence Logic for questions:
-        # If the LLM generated new questions, store them.
         if response_obj.questions_generated:
             new_info['technical_questions'] = response_obj.questions_generated
         else:
-            # Preserve existing questions
             new_info['technical_questions'] = st.session_state.candidate_info.get('technical_questions', [])
 
         st.session_state.candidate_info = new_info
         st.session_state.is_complete = response_obj.is_complete
 
-        # Add assistant response to history
         st.session_state.messages.append({"role": "assistant", "content": response_obj.response_message})
-        
-        # Persist to DB
         db.save_candidate(st.session_state.candidate_info, st.session_state.messages, st.session_state.is_complete)
         
         with st.chat_message("assistant"):
@@ -180,11 +158,7 @@ if user_input := st.chat_input("Type your message here...", disabled=st.session_
 if not st.session_state.messages:
     welcome_msg = """Welcome to **TalentScout**! 🚀
     
-I'm thrilled to assist you with your application journey today. I'm here to learn more about your unique skills and see how they align with our world-class tech teams.
-
-To get us started on the right foot, could you please take a moment to share your basic contact details in the **profile section on the left**? 
-
-Once you've done that, I'm eager to dive into your technical world and hear all about the amazing tools and frameworks you've mastered!"""
+I'm thrilled to assist you. Please fill in your basic contact details in the **sidebar on the left**, and then share your tech stack here so we can get started!"""
     st.session_state.messages.append({"role": "assistant", "content": welcome_msg})
     with st.chat_message("assistant"):
         st.markdown(welcome_msg)
