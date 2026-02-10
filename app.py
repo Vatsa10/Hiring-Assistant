@@ -1,10 +1,14 @@
+import os
+# Disable CrewAI telemetry to avoid signal threading issues in Streamlit
+os.environ["OTEL_SDK_DISABLED"] = "true"
+os.environ["CREWAI_TELEMETRY_OPT_OUT"] = "true"
+
 import streamlit as st
 from crewai import Crew
 from agents import create_recruiter_agent
 from tasks import create_screening_task
 from models import CandidateInfo, ScreeningResponse
 from database import DatabaseManager
-import os
 
 # Initialize database
 db = DatabaseManager()
@@ -14,7 +18,7 @@ st.set_page_config(page_title="TalentScout Hiring Assistant", page_icon="💼")
 
 # Initialize session state from DB if email is available
 if "candidate_info" not in st.session_state:
-    st.session_state.candidate_info = CandidateInfo().dict()
+    st.session_state.candidate_info = CandidateInfo().model_dump()
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "is_complete" not in st.session_state:
@@ -22,7 +26,7 @@ if "is_complete" not in st.session_state:
 
 # Sidebar for Candidate Information
 st.sidebar.title("📋 Candidate Profile")
-st.sidebar.markdown("Please provide your details below to proceed with the screening.")
+st.sidebar.markdown("Please provide your contact details below.")
 
 # Load from DB functionality
 with st.sidebar.expander("Existing Candidate?"):
@@ -47,7 +51,7 @@ with st.sidebar.expander("Existing Candidate?"):
         else:
             st.error("No profile found for this email.")
 
-# Form-like inputs in sidebar
+# Form-like inputs in sidebar (Tech Stack removed)
 with st.sidebar.form("candidate_form"):
     full_name = st.text_input("Full Name", value=st.session_state.candidate_info.get("full_name") or "")
     email = st.text_input("Email Address", value=st.session_state.candidate_info.get("email") or "")
@@ -59,7 +63,6 @@ with st.sidebar.form("candidate_form"):
     
     desired_positions = st.text_input("Desired Position(s) (comma separated)", value=", ".join(st.session_state.candidate_info.get("desired_positions") or []))
     current_location = st.text_input("Current Location", value=st.session_state.candidate_info.get("current_location") or "")
-    tech_stack = st.text_input("Tech Stack (comma separated)", value=", ".join(st.session_state.candidate_info.get("tech_stack") or []))
     
     submit_button = st.form_submit_button("Update Profile")
     
@@ -72,12 +75,22 @@ with st.sidebar.form("candidate_form"):
             "years_of_experience": years_of_experience,
             "desired_positions": [p.strip() for p in desired_positions.split(",")] if desired_positions else [],
             "current_location": current_location if current_location else None,
-            "tech_stack": [t.strip() for t in tech_stack.split(",")] if tech_stack else [],
         })
         # Persist immediately to DB
         db.save_candidate(st.session_state.candidate_info, st.session_state.messages, st.session_state.is_complete)
+        
+        # Terminal notification
+        print(f"\n[INFO] Profile Updated for: {st.session_state.candidate_info.get('full_name')} ({st.session_state.candidate_info.get('email')})")
+        
+        # Frontend notification
+        st.toast("✅ Profile Updated Successfully!")
         st.success("Profile updated and saved!")
         st.rerun()
+
+# Display current tech stack in sidebar if available
+if st.session_state.candidate_info.get("tech_stack"):
+    st.sidebar.markdown("---")
+    st.sidebar.markdown(f"**Declared Tech Stack:**\n{', '.join(st.session_state.candidate_info['tech_stack'])}")
 
 st.sidebar.markdown("---")
 st.sidebar.caption("🔒 **Data Privacy Notice**")
@@ -144,6 +157,10 @@ if user_input := st.chat_input("Type your message here...", disabled=st.session_
         elif st.session_state.candidate_info.get('technical_questions'):
             new_info['technical_questions'] = st.session_state.candidate_info['technical_questions']
 
+        # Ensure tech_stack is preserved or updated from extraction
+        if not new_info.get('tech_stack') and st.session_state.candidate_info.get('tech_stack'):
+            new_info['tech_stack'] = st.session_state.candidate_info['tech_stack']
+
         st.session_state.candidate_info = new_info
         st.session_state.is_complete = response_obj.is_complete
 
@@ -164,11 +181,13 @@ if user_input := st.chat_input("Type your message here...", disabled=st.session_
 
 # Welcome message
 if not st.session_state.messages:
-    welcome_msg = """Hello! I'm the TalentScout Hiring Assistant. 👋
+    welcome_msg = """Welcome to **TalentScout**! 🚀
     
-I've been designed to help you through our initial screening process. To get started, please fill out your basic details in the **sidebar to the left**. 
+I'm thrilled to assist you with your application journey today. I'm here to learn more about your unique skills and see how they align with our world-class tech teams.
 
-Once you've updated your profile, we can move forward with your assessment!"""
+To get us started on the right foot, could you please take a moment to share your basic contact details in the **profile section on the left**? 
+
+Once you've done that, I'm eager to dive into your technical world and hear all about the amazing tools and frameworks you've mastered!"""
     st.session_state.messages.append({"role": "assistant", "content": welcome_msg})
     with st.chat_message("assistant"):
         st.markdown(welcome_msg)
