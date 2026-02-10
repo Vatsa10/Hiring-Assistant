@@ -135,14 +135,23 @@ if user_input := st.chat_input("Type your message here...", disabled=st.session_
         
         result = crew.kickoff()
         
-        if hasattr(result, 'pydantic'):
+        # Debugging LLM output
+        print(f"\n[DEBUG] LLM Raw Result: {result}")
+        
+        if hasattr(result, 'pydantic') and result.pydantic:
             response_obj = result.pydantic
+            print(f"[DEBUG] Pydantic Response Info: {response_obj.updated_info}")
         else:
             response_obj = ScreeningResponse(
                 updated_info=CandidateInfo(**st.session_state.candidate_info),
-                response_message=str(result),
+                response_message=str(result) if str(result).strip() else "I'm sorry, I encountered a slight issue processing that. Could you please repeat or elaborate?",
                 is_complete=False
             )
+            print(f"[DEBUG] Fallback Response used.")
+
+        # Ensure we don't show a blank message
+        if not response_obj.response_message or not response_obj.response_message.strip():
+            response_obj.response_message = "That's very interesting! Let's continue with our screening."
 
         # Update state from LLM extraction (sync with sidebar)
         new_info = response_obj.updated_info.model_dump()
