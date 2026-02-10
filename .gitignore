@@ -1,0 +1,4 @@
+.env
+.venv
+product.md
+__pycache__
