@@ -16,7 +16,7 @@ db = DatabaseManager()
 # Page config
 st.set_page_config(page_title="TalentScout Hiring Assistant", page_icon="💼")
 
-# Initialize session state from DB if email is available
+# Initialize session state
 if "candidate_info" not in st.session_state:
     st.session_state.candidate_info = CandidateInfo().model_dump()
 if "messages" not in st.session_state:
@@ -42,11 +42,12 @@ with st.sidebar.expander("Existing Candidate?"):
                 "desired_positions": data.get("desired_positions"),
                 "current_location": data.get("current_location"),
                 "tech_stack": data.get("tech_stack"),
-                "technical_questions": data.get("technical_questions")
+                "technical_questions": data.get("technical_questions"),
+                "current_question_index": data.get("current_question_index", 0)
             }
-            st.session_state.messages = history
+            # Only update profile details, do not restore conversation history
             st.session_state.is_complete = bool(data.get("is_complete"))
-            st.success("Profile Loaded!")
+            st.success("Profile Loaded (excluding chat history)!")
             st.rerun()
         else:
             st.error("No profile found for this email.")
@@ -87,10 +88,15 @@ with st.sidebar.form("candidate_form"):
         st.success("Profile updated and saved!")
         st.rerun()
 
-# Display current tech stack in sidebar if available
+# Display current progress in sidebar
 if st.session_state.candidate_info.get("tech_stack"):
     st.sidebar.markdown("---")
-    st.sidebar.markdown(f"**Declared Tech Stack:**\n{', '.join(st.session_state.candidate_info['tech_stack'])}")
+    st.sidebar.markdown(f"**Tech Stack:** {', '.join(st.session_state.candidate_info['tech_stack'])}")
+    if st.session_state.candidate_info.get("technical_questions"):
+        total_q = len(st.session_state.candidate_info["technical_questions"])
+        curr_q = st.session_state.candidate_info.get("current_question_index", 0)
+        st.sidebar.progress(min(curr_q / total_q, 1.0) if total_q > 0 else 0)
+        st.sidebar.caption(f"Question {min(curr_q + 1, total_q)} of {total_q}")
 
 st.sidebar.markdown("---")
 st.sidebar.caption("🔒 **Data Privacy Notice**")
@@ -111,16 +117,6 @@ if user_input := st.chat_input("Type your message here...", disabled=st.session_
     with st.chat_message("user"):
         st.markdown(user_input)
 
-    # Exit check
-    if any(keyword in user_input.lower() for keyword in ["exit", "quit", "goodbye"]):
-        st.session_state.is_complete = True
-        response = "Thank you for your time. Goodbye!"
-        st.session_state.messages.append({"role": "assistant", "content": response})
-        with st.chat_message("assistant"):
-            st.markdown(response)
-        db.save_candidate(st.session_state.candidate_info, st.session_state.messages, st.session_state.is_complete)
-        st.rerun()
-
     # Process with CrewAI
     with st.spinner("Analyzing response..."):
         agent = create_recruiter_agent()
@@ -128,7 +124,7 @@ if user_input := st.chat_input("Type your message here...", disabled=st.session_
             agent, 
             user_input, 
             st.session_state.candidate_info, 
-            st.session_state.messages[-5:] # last 5 messages for context
+            st.session_state.messages[-15:] # last 15 messages for better context
         )
         
         crew = Crew(
@@ -151,33 +147,25 @@ if user_input := st.chat_input("Type your message here...", disabled=st.session_
         # Update state from LLM extraction (sync with sidebar)
         new_info = response_obj.updated_info.model_dump()
         
-        # Merge technical questions if they were just generated
+        # Persistence Logic for questions:
+        # If the LLM generated new questions, store them.
         if response_obj.questions_generated:
             new_info['technical_questions'] = response_obj.questions_generated
-        elif st.session_state.candidate_info.get('technical_questions'):
-            new_info['technical_questions'] = st.session_state.candidate_info['technical_questions']
-
-        # Ensure tech_stack is preserved or updated from extraction
-        if not new_info.get('tech_stack') and st.session_state.candidate_info.get('tech_stack'):
-            new_info['tech_stack'] = st.session_state.candidate_info['tech_stack']
+        else:
+            # Preserve existing questions
+            new_info['technical_questions'] = st.session_state.candidate_info.get('technical_questions', [])
 
         st.session_state.candidate_info = new_info
         st.session_state.is_complete = response_obj.is_complete
 
-        # Add assistant response
+        # Add assistant response to history
         st.session_state.messages.append({"role": "assistant", "content": response_obj.response_message})
         
-        # Persist to DB after chat update
+        # Persist to DB
         db.save_candidate(st.session_state.candidate_info, st.session_state.messages, st.session_state.is_complete)
         
         with st.chat_message("assistant"):
             st.markdown(response_obj.response_message)
-            
-            # If technical questions were generated, show them
-            if response_obj.questions_generated:
-                st.markdown("### Technical Screening Questions")
-                for i, q in enumerate(response_obj.questions_generated):
-                    st.write(f"{i+1}. {q}")
 
 # Welcome message
 if not st.session_state.messages:
