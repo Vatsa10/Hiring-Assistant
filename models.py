@@ -9,6 +9,7 @@ class CandidateInfo(BaseModel):
     desired_positions: Optional[List[str]] = Field(None, description="List of positions the candidate is interested in")
     current_location: Optional[str] = Field(None, description="City and Country")
     tech_stack: Optional[List[str]] = Field(None, description="List of technologies, frameworks, and tools")
+    technical_questions: Optional[List[str]] = Field(None, description="Existing technical questions provided to the candidate")
 
 class ScreeningResponse(BaseModel):
     updated_info: CandidateInfo = Field(..., description="Extract any new information found in the user response")

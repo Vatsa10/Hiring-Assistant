@@ -3,12 +3,16 @@ from crewai import Crew
 from agents import create_recruiter_agent
 from tasks import create_screening_task
 from models import CandidateInfo, ScreeningResponse
+from database import DatabaseManager
 import os
+
+# Initialize database
+db = DatabaseManager()
 
 # Page config
 st.set_page_config(page_title="TalentScout Hiring Assistant", page_icon="💼")
 
-# Initialize session state
+# Initialize session state from DB if email is available
 if "candidate_info" not in st.session_state:
     st.session_state.candidate_info = CandidateInfo().dict()
 if "messages" not in st.session_state:
@@ -19,6 +23,29 @@ if "is_complete" not in st.session_state:
 # Sidebar for Candidate Information
 st.sidebar.title("📋 Candidate Profile")
 st.sidebar.markdown("Please provide your details below to proceed with the screening.")
+
+# Load from DB functionality
+with st.sidebar.expander("Existing Candidate?"):
+    lookup_email = st.text_input("Enter Email to Load Profile")
+    if st.button("Load Data"):
+        data, history = db.get_candidate_by_email(lookup_email)
+        if data:
+            st.session_state.candidate_info = {
+                "full_name": data.get("full_name"),
+                "email": data.get("email"),
+                "phone": data.get("phone"),
+                "years_of_experience": data.get("years_of_experience"),
+                "desired_positions": data.get("desired_positions"),
+                "current_location": data.get("current_location"),
+                "tech_stack": data.get("tech_stack"),
+                "technical_questions": data.get("technical_questions")
+            }
+            st.session_state.messages = history
+            st.session_state.is_complete = bool(data.get("is_complete"))
+            st.success("Profile Loaded!")
+            st.rerun()
+        else:
+            st.error("No profile found for this email.")
 
 # Form-like inputs in sidebar
 with st.sidebar.form("candidate_form"):
@@ -47,8 +74,14 @@ with st.sidebar.form("candidate_form"):
             "current_location": current_location if current_location else None,
             "tech_stack": [t.strip() for t in tech_stack.split(",")] if tech_stack else [],
         })
-        st.success("Profile updated!")
+        # Persist immediately to DB
+        db.save_candidate(st.session_state.candidate_info, st.session_state.messages, st.session_state.is_complete)
+        st.success("Profile updated and saved!")
         st.rerun()
+
+st.sidebar.markdown("---")
+st.sidebar.caption("🔒 **Data Privacy Notice**")
+st.sidebar.caption("Your information is processed for recruitment purposes only and is stored securely in our local database.")
 
 st.title("💼 TalentScout Hiring Assistant")
 st.markdown("---")
@@ -72,6 +105,7 @@ if user_input := st.chat_input("Type your message here...", disabled=st.session_
         st.session_state.messages.append({"role": "assistant", "content": response})
         with st.chat_message("assistant"):
             st.markdown(response)
+        db.save_candidate(st.session_state.candidate_info, st.session_state.messages, st.session_state.is_complete)
         st.rerun()
 
     # Process with CrewAI
@@ -102,11 +136,23 @@ if user_input := st.chat_input("Type your message here...", disabled=st.session_
             )
 
         # Update state from LLM extraction (sync with sidebar)
-        st.session_state.candidate_info = response_obj.updated_info.model_dump()
+        new_info = response_obj.updated_info.model_dump()
+        
+        # Merge technical questions if they were just generated
+        if response_obj.questions_generated:
+            new_info['technical_questions'] = response_obj.questions_generated
+        elif st.session_state.candidate_info.get('technical_questions'):
+            new_info['technical_questions'] = st.session_state.candidate_info['technical_questions']
+
+        st.session_state.candidate_info = new_info
         st.session_state.is_complete = response_obj.is_complete
 
         # Add assistant response
         st.session_state.messages.append({"role": "assistant", "content": response_obj.response_message})
+        
+        # Persist to DB after chat update
+        db.save_candidate(st.session_state.candidate_info, st.session_state.messages, st.session_state.is_complete)
+        
         with st.chat_message("assistant"):
             st.markdown(response_obj.response_message)
             
@@ -115,7 +161,6 @@ if user_input := st.chat_input("Type your message here...", disabled=st.session_
                 st.markdown("### Technical Screening Questions")
                 for i, q in enumerate(response_obj.questions_generated):
                     st.write(f"{i+1}. {q}")
-                st.session_state.is_complete = True
 
 # Welcome message
 if not st.session_state.messages:
