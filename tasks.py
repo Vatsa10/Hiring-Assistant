@@ -1,44 +1,26 @@
 from crewai import Task
 from models import ScreeningResponse
-from prompts import STATE_PROMPT, TECHNICAL_QUESTION_PROMPT
+from prompts import STATE_PROMPT
 
 def create_screening_task(agent, user_input, current_state_dict, history):
-    # Determine missing fields for the prompt
-    missing_fields = [k for k, v in current_state_dict.items() if v is None or v == []]
-    
-    # Context prompt includes history and current state
-    context = f"""
-    Conversation History:
-    {history}
-    
-    Current User Input: {user_input}
-    
-    {STATE_PROMPT.format(candidate_info=current_state_dict, missing_info=missing_fields)}
-    """
-    
-    # Check if we should trigger question generation
-    # Logic: Tech Stack is present AND Strongest Areas are present AND we don't have questions yet
-    tech_stack = current_state_dict.get('tech_stack')
-    strongest = current_state_dict.get('strongest_areas')
-    questions = current_state_dict.get('technical_questions', [])
-    
-    if tech_stack and strongest and not questions:
-        context += f"\n\n{TECHNICAL_QUESTION_PROMPT.format(
-            tech_stack=tech_stack,
-            strongest_areas=strongest,
-            desired_positions=current_state_dict.get('desired_positions', 'not specified'),
-            experience=current_state_dict.get('years_of_experience', 'not specified')
-        )}"
-    
-    # Explicitly highlight current queston context if they exist
-    if questions:
+    # Minimal context for chat task
+    qs = current_state_dict.get('technical_questions', [])
+    ctx = ""
+    if qs:
         idx = current_state_dict.get('current_question_index', 0)
-        context += f"\n\nCURRENT PROGRESS: You are on question index {idx} out of {len(questions)}."
-        context += f"\nQUESTIONS LIST: {questions}"
+        ctx = f"Q_Context: Index={idx}, Total={len(qs)}, List={qs}"
+
+    context = f"""
+    History: {history}
+    Input: {user_input}
+    State: {current_state_dict}
+    {ctx}
+    {STATE_PROMPT.format(candidate_info=current_state_dict)}
+    """
 
     return Task(
         description=context,
-        expected_output="An updated Screening Response object with the candidate's info and the next message to show them.",
+        expected_output="Update state + next message.",
         agent=agent,
         output_pydantic=ScreeningResponse
     )
